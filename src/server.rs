@@ -832,7 +832,7 @@ pub enum NostrMessage {
 }
 
 #[derive(Serialize, Deserialize)]
-struct InvoiceReponse {
+struct InvoiceResponse {
     admission_cost: u64,
     qr_code: String,
     invoice: String,
