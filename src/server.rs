@@ -248,97 +248,7 @@ async fn handle_web_request(
                 .body(Body::from("ok"))
                 .unwrap())
         }
-        // Endpoint for relays terms
-        ("/terms", false) => Ok(Response::builder()
-            .status(200)
-            .header("Content-Type", "text/plain")
-            .body(Body::from(settings.pay_to_relay.terms_message))
-            .unwrap()),
-        // Endpoint to allow users to sign up
-        ("/join", false) => {
-            // Stops sign ups if disabled
-            if !settings.pay_to_relay.sign_ups {
-                return Ok(Response::builder()
-                    .status(401)
-                    .header("Content-Type", "text/plain")
-                    .body(Body::from("Sorry, joining is not allowed at the moment"))
-                    .unwrap());
-            }
 
-            let html = r#"
-<!doctype HTML>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-      font-family: Arial, sans-serif;
-      background-color: #6320a7;
-      color: white;
-    }
-
-    .container {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 400px;
-    }
-
-    a {
-      color: pink;
-    }
-
-    input[type="text"] {
-        width: 100%;
-        max-width: 500px;
-        box-sizing: border-box;
-        overflow-x: auto;
-        white-space: nowrap;
-    }
-  </style>
-</head>
-<body>
-  <div style="width:75%;">
-    <h1>Enter your pubkey</h1>
-    <form action="/invoice" onsubmit="return checkForm(this);">
-      <input type="text" name="pubkey" id="pubkey-input"><br><br>
-      <input type="checkbox" id="terms" required>
-      <label for="terms">I agree to the <a href="/terms">terms and conditions</a></label><br><br>
-      <button type="submit">Submit</button>
-    </form>
-    <button id="get-public-key-btn">Get Public Key</button>
-  </div>
-  <script>
-    function checkForm(form) {
-      if (!form.terms.checked) {
-        alert("Please agree to the terms and conditions");
-        return false;
-      }
-      return true;
-    }
-
-    const pubkeyInput = document.getElementById('pubkey-input');
-      const getPublicKeyBtn = document.getElementById('get-public-key-btn');
-      getPublicKeyBtn.addEventListener('click', async function() {
-        try {
-          const publicKey = await window.nostr.getPublicKey();
-          pubkeyInput.value = publicKey;
-        } catch (error) {
-          console.error(error);
-        }
-      });
-  </script>
-</body>
-</html>
-            "#;
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .body(Body::from(html))
-                .unwrap())
-        }
         // Endpoint to display invoice
         ("/invoice", false) => {
             // Stops sign ups if disabled
@@ -356,9 +266,9 @@ async fn handle_web_request(
             // Redirect back to join page if no pub key is found in query string
             if pubkey.is_none() {
                 return Ok(Response::builder()
-                    .status(404)
-                    .header("location", "/join")
-                    .body(Body::empty())
+                    .status(401)
+                    .header("Content-Type", "text/plain")
+                    .body(Body::from("No npub submitted"))
                     .unwrap());
             }
 
@@ -378,7 +288,8 @@ async fn handle_web_request(
             if let Ok((admission_status, _)) = repo.get_account_balance(&key.unwrap()).await {
                 if admission_status {
                     return Ok(Response::builder()
-                        .status(StatusCode::OK)
+                        .status(401)
+                        .header("Content-Type", "text/plain")
                         .body(Body::from("Already admitted"))
                         .unwrap());
                 } else {
@@ -411,8 +322,9 @@ async fn handle_web_request(
                     PaymentMessage::AccountAdmitted(m_pubkey) => {
                         if m_pubkey == pubkey.clone() {
                             return Ok(Response::builder()
-                                .status(StatusCode::OK)
-                                .body(Body::from("Already admitted"))
+                                .status(401)
+                                .header("Content-Type", "text/plain")
+                                .body(Body::from("This npub has already been admitted"))
                                 .unwrap());
                         }
                     }
@@ -424,6 +336,7 @@ async fn handle_web_request(
             if invoice_info.is_none() {
                 return Ok(Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("Content-Type", "text/plain")
                     .body(Body::from("Sorry, could not get invoice"))
                     .unwrap());
             }
@@ -443,98 +356,35 @@ async fn handle_web_request(
                 qr_code = "Could not render image".to_string();
             }
 
-            let html_result = format!(
-                r#"
-<!DOCTYPE html>
-<html>
-  <head>
-  <meta charset="UTF-8">
-    <style>
-      body {{
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        text-align: center;
-        font-family: Arial, sans-serif;
-        background-color:  #6320a7 ;
-        color: white;
-      }}
-      #copy-button {{
-        background-color: #bb5f0d ;
-        color: white;
-        padding: 10px 20px;
-        border-radius: 5px;
-        border: none;
-        cursor: pointer;
-      }}
-      #copy-button:hover {{
-        background-color: #8f29f4;
-      }}
-    .container {{
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 400px;
-    }}
-    a {{
-        color: pink;
-    }}
-    </style>
-  </head>
-  <body>
-    <div style="width:75%;">
-      <h3>
-        To use this relay, an admission fee of {} sats is required. By paying the fee, you agree to the <a href='terms'>terms</a>.
-      </h3>
-    </div>
-    <div>
-        <div style="max-height: 300px;">
-            {}
-        </div>
-    </div>
-    <div>
-    <div style="width: 75%;">
-        <p style="overflow-wrap: break-word; width: 500px;">{}</p>
-        <button id="copy-button">Copy</button>
-    </div>
-    <div>
-        <p> This page will not refresh </p>
-        <p> Verify admission <a href=/account?pubkey={}>here</a> once you have paid</p>
-    </div>
-    </div>
-  </body>
-</html>
-
-
-<script>
-  const copyButton = document.getElementById("copy-button");
-  if (navigator.clipboard) {{
-    copyButton.addEventListener("click", function() {{
-      const textToCopy = "{}";
-      navigator.clipboard.writeText(textToCopy).then(function() {{
-        console.log("Text copied to clipboard");
-      }}, function(err) {{
-        console.error("Could not copy text: ", err);
-      }});
-    }});
-  }} else {{
-    copyButton.style.display = "none";
-    console.warn("Clipboard API is not supported in this browser");
-  }}
-</script>
-"#,
-                settings.pay_to_relay.admission_cost,
+            let response = InvoiceResponse {
+                admission_cost: settings.pay_to_relay.admission_cost,
                 qr_code,
-                invoice_info.bolt11,
-                pubkey,
-                invoice_info.bolt11
-            );
-
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .body(Body::from(html_result))
-                .unwrap())
+                invoice: invoice_info.bolt11.clone(),
+                pubkey: pubkey.clone(),
+            };
+            
+            match serde_json::to_string(&response) {
+                Ok(json_response) => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::OK)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(json_response))
+                        .unwrap())
+                },
+                Err(e) => {
+                    // Log the error for debugging purposes
+                    eprintln!("Failed to serialize response: {:?}", e);
+            
+                    // Return an internal server error response
+                    return Ok(Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from("Sorry, something went wrong"))
+                        .unwrap())
+                }
+            }
         }
+        
         ("/account", false) => {
             // Stops sign ups if disabled
             if !settings.pay_to_relay.enabled {
@@ -552,7 +402,7 @@ async fn handle_web_request(
             if pubkey.is_none() {
                 return Ok(Response::builder()
                     .status(404)
-                    .header("location", "/join")
+                    .header("Content-Type", "text/plain")
                     .body(Body::empty())
                     .unwrap());
             }
@@ -569,53 +419,44 @@ async fn handle_web_request(
             }
 
             // Checks if user is already admitted
-            let text =
+            let status =
                 if let Ok((admission_status, _)) = repo.get_account_balance(&key.unwrap()).await {
                     if admission_status {
-                        r#"<span style="color: green;">is</span>"#
+                        "PERMITTED".to_string()
                     } else {
-                        r#"<span style="color: red;">is not</span>"#
+                        "NOT_PERMITTED".to_string()
                     }
                 } else {
-                    "Could not get admission status"
+                    "ERROR".to_string()
                 };
 
-            let html_result = format!(
-                r#"
-            <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8">
-    <style>
-      body {{
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        text-align: center;
-        font-family: Arial, sans-serif;
-        background-color: #6320a7;
-        color: white;
-        height: 100vh;
-      }}
-    </style>
-  </head>
-  <body>
-    <div>
-      <h5>{} {} admitted</h5>
-    </div>
-  </body>
-</html>
-
-
-            "#,
-                pubkey, text
-            );
-
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .body(Body::from(html_result))
-                .unwrap())
+            let response = AccountResponse {
+                status,
+                pubkey: pubkey.clone(),
+            };
+            
+            match serde_json::to_string(&response) {
+                Ok(json_response) => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::OK)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(json_response))
+                        .unwrap())
+                },
+                Err(e) => {
+                    // Log the error for debugging purposes
+                    eprintln!("Failed to serialize response: {:?}", e);
+            
+                    // Return an internal server error response
+                    return Ok(Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .header("Content-Type", "text/plain")
+                        .body(Body::from("Sorry, something went wrong"))
+                        .unwrap())
+                }
+            }
         }
+        
         // later balance
         (_, _) => {
             // handle any other url
@@ -988,6 +829,20 @@ pub enum NostrMessage {
     SubMsg(Subscription),
     /// A `CLOSE` message
     CloseMsg(CloseCmd),
+}
+
+#[derive(Serialize, Deserialize)]
+struct InvoiceReponse {
+    admission_cost: u64,
+    qr_code: String,
+    invoice: String,
+    pubkey: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AccountResponse {
+    status: String,
+    pubkey: String,
 }
 
 /// Convert Message to `NostrMessage`
